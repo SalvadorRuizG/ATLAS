@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas Nacional — Prototipo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="css/estilos.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="mark">A</div>
+    <div class="brand-text">
+      <h1>Atlas Nacional</h1>
+      <p>Energía y territorio — prototipo de arranque</p>
+    </div>
+  </div>
+  <div class="status-pill">
+    <span class="status-dot"></span>
+    Fase 0 · cascarón funcional, sin capas oficiales conectadas aún
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+
+    <div class="sidebar-section">
+      <h2>Buscar</h2>
+      <div class="search-box">
+        <input id="searchInput" type="text" placeholder="Nombre de estado…" autocomplete="off" />
+      </div>
+      <div class="search-hint">Búsqueda funcional por entidad federativa. La búsqueda por capa (permisos, municipios) se activará junto con el servidor geoespacial.</div>
+    </div>
+
+    <div class="sidebar-section">
+      <h2>Mapa base</h2>
+      <div class="basemap-options" id="basemapOptions">
+        <label><input type="radio" name="basemap" value="claro" checked> Claro (referencia)</label>
+        <label><input type="radio" name="basemap" value="oscuro"> Oscuro</label>
+        <label><input type="radio" name="basemap" value="satelite"> Satélite</label>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h2>Energías renovables</h2>
+
+      <details class="layer-group" open>
+        <summary>Solar</summary>
+        <div class="layer-row disabled">
+          <input type="checkbox" disabled>
+          <label>Potencial fotovoltaico</label>
+          <span class="badge pending">Pendiente</span>
+        </div>
+        <div class="layer-row disabled">
+          <input type="checkbox" disabled>
+          <label>Radiación horizontal</label>
+          <span class="badge pending">Pendiente</span>
+        </div>
+      </details>
+
+      <details class="layer-group">
+        <summary>Eólica</summary>
+        <div class="layer-row disabled">
+          <input type="checkbox" disabled>
+          <label>Velocidad de viento (10–200m)</label>
+          <span class="badge pending">Pendiente</span>
+        </div>
+      </details>
+
+      <details class="layer-group">
+        <summary>Geotérmica</summary>
+        <div class="layer-row disabled">
+          <input type="checkbox" disabled>
+          <label>Campos y gradiente térmico</label>
+          <span class="badge pending">Pendiente</span>
+        </div>
+      </details>
+
+      <details class="layer-group">
+        <summary>Biomasa</summary>
+        <div class="layer-row disabled">
+          <input type="checkbox" disabled>
+          <label>Residuos agrícolas / forestales / urbanos</label>
+          <span class="badge pending">Pendiente</span>
+        </div>
+      </details>
+
+      <details class="layer-group">
+        <summary>Hídrica</summary>
+        <div class="layer-row disabled">
+          <input type="checkbox" disabled>
+          <label>Disponibilidad por cuenca</label>
+          <span class="badge pending">Pendiente</span>
+        </div>
+      </details>
+    </div>
+
+    <div class="sidebar-section">
+      <h2>Restricciones territoriales</h2>
+      <div class="layer-row">
+        <input type="checkbox" id="capa-anp" data-layer="anp">
+        <label>Áreas Naturales Protegidas</label>
+      </div>
+      <div class="layer-row disabled">
+        <input type="checkbox" disabled>
+        <label>Sitios Ramsar</label>
+        <span class="badge pending">Pendiente</span>
+      </div>
+      <div class="layer-row disabled">
+        <input type="checkbox" disabled>
+        <label>Núcleos agrarios</label>
+        <span class="badge pending">Pendiente</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h2>Atlas general (futuro)</h2>
+      <div class="layer-row disabled">
+        <input type="checkbox" disabled>
+        <label>Uso de suelo y vegetación</label>
+        <span class="badge pending">Fase 5</span>
+      </div>
+      <div class="layer-row disabled">
+        <input type="checkbox" disabled>
+        <label>Infraestructura y red de transmisión</label>
+        <span class="badge pending">Fase 5</span>
+      </div>
+    </div>
+
+    <div class="roadmap-note">
+      <strong>Qué es esto</strong>
+      Estructura de navegación y mapa base funcionando hoy. Cada capa se conecta como un servicio WMS/WFS en cuanto el servidor geoespacial (PostGIS + GeoServer) esté disponible — no requiere rehacer esta interfaz.
+    </div>
+
+  </aside>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="map-toolbar">
+      <strong>Mapa base funcional</strong>
+      Navegación, zoom y cambio de estilo ya operan. Prueba buscar un estado en el panel izquierdo.
+    </div>
+    <div class="legend-box" id="legendBox">
+      <strong>Leyenda</strong><br>
+      Se activará por capa una vez conectado GeoServer.
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>Atlas Nacional — documento de trabajo, no es la versión final</span>
+  <span>Base cartográfica: OpenStreetMap / Carto / Esri (referencia, no oficial)</span>
+</footer>
+
+<script src="js/layerManager.js"></script>
+<script src="js/capas.js"></script>
+<script src="js/buscador.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
