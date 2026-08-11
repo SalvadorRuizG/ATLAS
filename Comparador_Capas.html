@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Comparador de Capas — Atlas Nacional</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<style>
+  :root{
+    --primary:#9F2241; --primary-dark:#6A1C32; --secondary:#13322B; --accent:#BC955C;
+    --accent-tint:#f4ead9; --bg:#F8F7F2; --card:#FFFFFF; --ink:#20211f; --muted:#6b6f6a;
+    --line:#e6e2d8; --white:#ffffff;
+    --ok:#2f7a4f; --ok-tint:#e6f2ea; --warn:#b9791f; --warn-tint:#faf1e0; --bad:#a4333f; --bad-tint:#f7e6e8;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--bg);color:var(--ink);}
+  body{font-family:"Noto Sans","Segoe UI",Arial,sans-serif; padding-bottom:60px;}
+  h1,h2,h3,.mono-label,.btn,summary,th{font-family:"Montserrat","Segoe UI",Arial,sans-serif;}
+
+  header{
+    background:var(--primary-dark); color:var(--white); padding:16px 26px;
+    display:flex; align-items:center; justify-content:space-between; border-bottom:3px solid var(--accent);
+  }
+  .brand{display:flex; align-items:center; gap:14px;}
+  .brand .mark{
+    width:38px; height:38px; border-radius:8px; background:var(--secondary);
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:15px;
+    color:var(--accent); border:1px solid rgba(255,255,255,.15);
+  }
+  header h1{font-size:18px; margin:0; font-weight:700;}
+  header p{margin:1px 0 0; font-size:12px; color:#eccfd6; font-weight:500;}
+
+  main{max-width:1180px; margin:26px auto; padding:0 22px;}
+
+  .panel{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:22px 24px; margin-bottom:22px;
+  }
+  .panel h2{
+    font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--secondary);
+    margin:0 0 16px; font-weight:700;
+  }
+
+  .drop-row{display:grid; grid-template-columns:1fr 1fr; gap:20px;}
+  .dropzone{
+    border:2px dashed var(--line); border-radius:10px; padding:22px; text-align:center;
+    background:#fbfaf7; transition:border-color .15s, background .15s; cursor:pointer;
+  }
+  .dropzone.drag{border-color:var(--primary); background:var(--accent-tint);}
+  .dropzone.loaded{border-style:solid; border-color:var(--ok); background:var(--ok-tint);}
+  .dropzone .tag{
+    display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+    padding:3px 10px; border-radius:20px; margin-bottom:10px;
+  }
+  .dropzone.a .tag{background:var(--accent-tint); color:var(--primary-dark);}
+  .dropzone.b .tag{background:#e5eeec; color:var(--secondary);}
+  .dropzone .titulo{font-weight:700; font-size:14.5px; margin-bottom:4px;}
+  .dropzone .detalle{font-size:12px; color:var(--muted); line-height:1.5;}
+  .dropzone input[type=file]{display:none;}
+  .dropzone select{
+    margin-top:10px; width:100%; padding:6px 8px; font-size:12.5px; border-radius:6px;
+    border:1px solid var(--line); font-family:inherit; background:var(--white);
+  }
+
+  .config-row{display:flex; gap:24px; flex-wrap:wrap; align-items:flex-end; margin-top:18px;}
+  .field{display:flex; flex-direction:column; gap:6px; min-width:220px;}
+  .field label{font-size:11.5px; font-weight:700; color:var(--secondary); text-transform:uppercase; letter-spacing:.05em;}
+  .field select, .field input{
+    padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; font-family:inherit;
+    background:#fbfaf7;
+  }
+  .field .hint{font-size:11px; color:var(--muted);}
+
+  .btn{
+    background:var(--primary); color:var(--white); border:none; padding:11px 22px; border-radius:7px;
+    font-size:13.5px; font-weight:700; cursor:pointer; letter-spacing:.02em;
+  }
+  .btn:disabled{background:#c9b9bf; cursor:not-allowed;}
+  .btn.secondary{background:var(--white); color:var(--secondary); border:1px solid var(--line);}
+  .btn.small{padding:6px 12px; font-size:12px;}
+
+  .summary-grid{display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:6px;}
+  .stat{
+    border-radius:8px; padding:14px 12px; text-align:center; border:1px solid var(--line); background:#fbfaf7;
+  }
+  .stat .n{font-size:24px; font-weight:800; font-family:"Montserrat";}
+  .stat .l{font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px;}
+  .stat.ok{background:var(--ok-tint);} .stat.ok .n{color:var(--ok);}
+  .stat.warn{background:var(--warn-tint);} .stat.warn .n{color:var(--warn);}
+  .stat.bad{background:var(--bad-tint);} .stat.bad .n{color:var(--bad);}
+
+  .filters{display:flex; gap:8px; margin:18px 0 12px; flex-wrap:wrap;}
+  .chip{
+    padding:6px 13px; border-radius:20px; font-size:12px; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:var(--white); color:var(--muted);
+  }
+  .chip.active{background:var(--primary); color:var(--white); border-color:var(--primary);}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th{text-align:left; padding:9px 10px; background:#f1efe8; color:var(--secondary); font-size:10.5px;
+     text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--line);}
+  td{padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
+  tr.row-toggle{cursor:pointer;}
+  tr.row-toggle:hover{background:#fbfaf7;}
+  .badge{padding:2px 9px; border-radius:20px; font-size:10.5px; font-weight:700;}
+  .badge.identica{background:var(--ok-tint); color:var(--ok);}
+  .badge.equivalente{background:var(--warn-tint); color:var(--warn);}
+  .badge.diferente{background:var(--bad-tint); color:var(--bad);}
+  .badge.solo-a{background:var(--accent-tint); color:var(--primary-dark);}
+  .badge.solo-b{background:#e5eeec; color:var(--secondary);}
+
+  .detail-row td{background:#fcfbf8; padding:14px 18px;}
+  .diff-table{width:100%; font-size:12px; margin-top:6px;}
+  .diff-table th{background:transparent; border-bottom:1px solid var(--line);}
+  .diff-table td.old{color:var(--bad); text-decoration:line-through; opacity:.75;}
+  .diff-table td.new{color:var(--ok); font-weight:600;}
+  .geom-metrics{display:flex; gap:22px; margin-top:10px; font-size:12px; color:var(--muted); flex-wrap:wrap;}
+  .geom-metrics b{color:var(--ink);}
+
+  #map{height:460px; border-radius:8px; margin-top:6px; border:1px solid var(--line);}
+  .map-legend{display:flex; gap:18px; font-size:12px; color:var(--muted); margin-top:10px; flex-wrap:wrap;}
+  .map-legend span{display:inline-flex; align-items:center; gap:6px;}
+  .swatch{width:12px; height:12px; border-radius:3px; display:inline-block;}
+
+  .empty{padding:40px 20px; text-align:center; color:var(--muted); font-size:13px;}
+  .foot-actions{display:flex; justify-content:space-between; align-items:center; margin-top:14px;}
+  .status-msg{font-size:12.5px; color:var(--muted); margin-top:8px;}
+  .status-msg.error{color:var(--bad);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="mark">A</div>
+    <div>
+      <h1>Comparador de Capas</h1>
+      <p>Atlas Nacional — capa encontrada vs. capa trabajada</p>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div class="panel">
+    <h2>1 · Cargar archivos</h2>
+    <div class="drop-row">
+      <div class="dropzone a" id="dropA">
+        <span class="tag">Capa encontrada</span>
+        <div class="titulo">Arrastra o haz clic para elegir</div>
+        <div class="detalle">.geojson, .json o .gpkg — la que descargaste de un portal oficial</div>
+        <input type="file" id="fileA" accept=".geojson,.json,.gpkg">
+        <select id="layerA" style="display:none;"></select>
+      </div>
+      <div class="dropzone b" id="dropB">
+        <span class="tag">Capa trabajada</span>
+        <div class="titulo">Arrastra o haz clic para elegir</div>
+        <div class="detalle">.geojson, .json o .gpkg — tu versión ya personalizada/simplificada</div>
+        <input type="file" id="fileB" accept=".geojson,.json,.gpkg">
+        <select id="layerB" style="display:none;"></select>
+      </div>
+    </div>
+    <div class="status-msg" id="loadStatus"></div>
+  </div>
+
+  <div class="panel">
+    <h2>2 · Configurar comparación</h2>
+    <div class="config-row">
+      <div class="field">
+        <label>Campo llave — capa encontrada</label>
+        <select id="keyFieldA"><option value="__index__">Usar orden de aparición</option></select>
+      </div>
+      <div class="field">
+        <label>Campo llave — capa trabajada</label>
+        <select id="keyFieldB"><option value="__index__">Usar orden de aparición</option></select>
+        <span class="hint">Pueden tener nombre distinto en cada capa — el comparador empareja por valor, no por posición</span>
+      </div>
+      <div class="field" style="min-width:180px;">
+        <label style="visibility:hidden;">.</label>
+        <label style="text-transform:none; font-weight:500; display:flex; align-items:center; gap:6px; letter-spacing:0;">
+          <input type="checkbox" id="normalizarLlave" checked style="width:auto;">
+          Ignorar mayúsculas/acentos/espacios
+        </label>
+      </div>
+      <div class="field">
+        <label>Tolerancia de área</label>
+        <select id="tolArea">
+          <option value="1">1% (muy estricto)</option>
+          <option value="5" selected>5% (recomendado — típico de simplificación)</option>
+          <option value="15">15% (permisivo)</option>
+        </select>
+        <span class="hint">Diferencias por debajo de esto se marcan como "equivalente", no "diferente"</span>
+      </div>
+      <button class="btn" id="btnComparar" disabled>Comparar capas</button>
+    </div>
+    <div style="margin-top:18px; border-top:1px solid var(--line); padding-top:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span style="font-size:12px; font-weight:700; color:var(--secondary);">Equivalencias de campo (opcional)</span>
+        <button class="btn secondary small" id="btnAddMapeo" type="button">+ Agregar equivalencia</button>
+      </div>
+      <div class="hint" style="margin-bottom:8px; display:block;">
+        Para atributos que son el mismo dato pero se llaman distinto en cada capa (ej. <code>POB2020</code> ↔ <code>poblacion</code>) — evita que se marquen como diferencia falsa.
+      </div>
+      <div id="mapeoCamposList"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="resultsPanel" style="display:none;">
+    <h2>3 · Resultado de la comparación</h2>
+    <div class="summary-grid" id="summaryGrid"></div>
+
+    <div class="filters" id="filters"></div>
+
+    <table id="resultsTable">
+      <thead>
+        <tr><th style="width:26px;"></th><th>Llave</th><th>Nombre (referencia)</th><th>Atributos</th><th>Geometría</th><th>Estado</th></tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+
+    <div class="foot-actions">
+      <span class="status-msg" id="tableCount"></span>
+      <button class="btn secondary small" id="btnCSV">Exportar tabla a CSV</button>
+    </div>
+  </div>
+
+  <div class="panel" id="mapPanel" style="display:none;">
+    <h2>4 · Vista en mapa</h2>
+    <div id="map"></div>
+    <div class="map-legend">
+      <span><span class="swatch" style="background:#9F2241;"></span> Solo en capa encontrada</span>
+      <span><span class="swatch" style="background:#13322B;"></span> Solo en capa trabajada</span>
+      <span><span class="swatch" style="background:#BC955C;"></span> Con diferencias (ambas, superpuestas)</span>
+    </div>
+  </div>
+
+</main>
+
+<script>
+/* ============================================================
+   1) LECTURA DE ARCHIVOS (GeoJSON directo / GeoPackage vía sql.js)
+   ============================================================ */
+let sqlJsPromise = null;
+function getSqlJs() {
+  if (!sqlJsPromise) {
+    sqlJsPromise = initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
+  }
+  return sqlJsPromise;
+}
+
+function parseGeoPackageGeometry(blob) {
+  const view = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+  if (view.getUint8(0) !== 0x47 || view.getUint8(1) !== 0x50) throw new Error("Blob de geometría GeoPackage inválido");
+  const flags = view.getUint8(3);
+  const le = (flags & 0x01) === 1;
+  const envCode = (flags >> 1) & 0x07;
+  const envSizes = [0, 4, 6, 6, 8];
+  const wkbOffset = 8 + (envSizes[envCode] || 0) * 8;
+  return blob.slice(wkbOffset);
+}
+
+function parseWKB(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = 0;
+  const u8 = () => { const v = view.getUint8(pos); pos += 1; return v; };
+  const u32 = (le) => { const v = view.getUint32(pos, le); pos += 4; return v; };
+  const f64 = (le) => { const v = view.getFloat64(pos, le); pos += 8; return v; };
+  const pt = (le) => [f64(le), f64(le)];
+  const ring = (le) => { const n = u32(le); const r = []; for (let i = 0; i < n; i++) r.push(pt(le)); return r; };
+  function readGeom() {
+    const le = u8() === 1;
+    const type = u32(le) % 1000;
+    switch (type) {
+      case 1: return { type: "Point", coordinates: pt(le) };
+      case 2: { const n = u32(le); const p = []; for (let i=0;i<n;i++) p.push(pt(le)); return { type:"LineString", coordinates:p }; }
+      case 3: { const n = u32(le); const r = []; for (let i=0;i<n;i++) r.push(ring(le)); return { type:"Polygon", coordinates:r }; }
+      case 4: { const n = u32(le); const p = []; for (let i=0;i<n;i++){ pos+=5; p.push(pt(le)); } return { type:"MultiPoint", coordinates:p }; }
+      case 5: { const n = u32(le); const l = []; for (let i=0;i<n;i++){ pos+=5; const nn=u32(le); const p=[]; for(let j=0;j<nn;j++) p.push(pt(le)); l.push(p);} return { type:"MultiLineString", coordinates:l }; }
+      case 6: { const n = u32(le); const pl = []; for (let i=0;i<n;i++){ pos+=5; const nr=u32(le); const r=[]; for(let j=0;j<nr;j++) r.push(ring(le)); pl.push(r);} return { type:"MultiPolygon", coordinates:pl }; }
+      default: throw new Error("Tipo de geometría WKB no soportado: " + type);
+    }
+  }
+  return readGeom();
+}
+
+async function leerGeoJSON(file) {
+  const text = await file.text();
+  const data = JSON.parse(text);
+  const features = data.type === "FeatureCollection" ? data.features : [data];
+  return { capas: [{ nombre: file.name.replace(/\.(geo)?json$/i, ""), features }] };
+}
+
+async function leerGeoPackage(file) {
+  const SQL = await getSqlJs();
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const db = new SQL.Database(buf);
+
+  const tablasRes = db.exec(`SELECT c.table_name, g.column_name FROM gpkg_contents c
+                              LEFT JOIN gpkg_geometry_columns g ON c.table_name = g.table_name
+                              WHERE c.data_type = 'features'`);
+  if (!tablasRes.length) throw new Error("No se encontraron capas vectoriales en este GeoPackage");
+
+  const capas = [];
+  for (const [tabla, geomCol] of tablasRes[0].values) {
+    const res = db.exec(`SELECT * FROM "${tabla}"`);
+    if (!res.length) { capas.push({ nombre: tabla, features: [] }); continue; }
+    const cols = res[0].columns;
+    const geomIdx = cols.indexOf(geomCol);
+    const features = res[0].values.map(row => {
+      const props = {};
+      cols.forEach((c, i) => { if (i !== geomIdx) props[c] = row[i]; });
+      let geometry = null;
+      if (geomIdx !== -1 && row[geomIdx]) {
+        try {
+          const blob = new Uint8Array(row[geomIdx]);
+          geometry = parseWKB(parseGeoPackageGeometry(blob));
+        } catch (e) { /* geometría no decodificable: se deja null */ }
+      }
+      return { type: "Feature", properties: props, geometry };
+    });
+    capas.push({ nombre: tabla, features });
+  }
+  db.close();
+  return { capas };
+}
+
+async function leerArchivo(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (ext === "gpkg") return leerGeoPackage(file);
+  return leerGeoJSON(file);
+}
+
+/* ============================================================
+   2) UTILIDADES DE COMPARACIÓN GEOMÉTRICA Y DE ATRIBUTOS
+   ============================================================ */
+function flattenRings(g) {
+  if (!g) return [];
+  if (g.type === "Polygon") return g.coordinates;
+  if (g.type === "MultiPolygon") return g.coordinates.flat();
+  if (g.type === "LineString") return [g.coordinates];
+  if (g.type === "MultiLineString") return g.coordinates;
+  if (g.type === "Point") return [[g.coordinates]];
+  if (g.type === "MultiPoint") return [g.coordinates];
+  return [];
+}
+function countVertices(g) { return flattenRings(g).reduce((a, r) => a + r.length, 0); }
+function ringAreaKm2(ring, lat) {
+  let a = 0;
+  for (let i = 0; i < ring.length - 1; i++) { const [x1,y1]=ring[i],[x2,y2]=ring[i+1]; a += x1*y2 - x2*y1; }
+  a = Math.abs(a)/2;
+  return a * 111.32 * (111.32 * Math.cos(lat*Math.PI/180));
+}
+function geometryAreaKm2(g) {
+  const rings = flattenRings(g);
+  if (!rings.length || !rings[0].length) return 0;
+  const pts = rings.flat();
+  const avgLat = pts.reduce((s,p)=>s+p[1],0)/pts.length;
+  return rings.reduce((acc,r)=>acc+ringAreaKm2(r,avgLat),0);
+}
+function centroidApprox(g) {
+  const pts = flattenRings(g).flat();
+  if (!pts.length) return [0,0];
+  const sx = pts.reduce((s,p)=>s+p[0],0), sy = pts.reduce((s,p)=>s+p[1],0);
+  return [sx/pts.length, sy/pts.length];
+}
+function haversineKm([lon1,lat1],[lon2,lat2]) {
+  const R=6371, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R*2*Math.asin(Math.sqrt(a));
+}
+function coordsRoundEqual(a, b, dec) {
+  const f = n => Math.round(n*10**dec)/10**dec;
+  const norm = x => Array.isArray(x[0]) ? x.map(norm) : [f(x[0]), f(x[1])];
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
+function compareGeometries(gA, gB, tolPct) {
+  if (!gA || !gB) return { estado: gA===gB ? "identica" : "diferente", sinGeom:true };
+  const exact = gA.type===gB.type && coordsRoundEqual(gA.coordinates, gB.coordinates, 5);
+  const vA=countVertices(gA), vB=countVertices(gB);
+  const areaA=geometryAreaKm2(gA), areaB=geometryAreaKm2(gB);
+  const areaDiffPct = areaA ? Math.abs(areaA-areaB)/areaA*100 : (areaB?100:0);
+  const centroidDistKm = haversineKm(centroidApprox(gA), centroidApprox(gB));
+  let estado = "identica";
+  if (!exact) estado = (areaDiffPct <= tolPct && centroidDistKm < 10) ? "equivalente" : "diferente";
+  return { estado, exact, vA, vB, areaA, areaB, areaDiffPct, centroidDistKm };
+}
+function compareProps(pA, pB, mapeo = []) {
+  const propsA = pA || {};
+  const propsB = pB || {};
+
+  const mapeadosA = new Set(mapeo.map(m => m.a));
+  const mapeadosB = new Set(mapeo.map(m => m.b));
+
+  // Solo comparar campos que existen en AMBAS capas
+  const keysA = Object.keys(propsA).filter(k => !mapeadosA.has(k));
+  const keysB = Object.keys(propsB).filter(k => !mapeadosB.has(k));
+
+  const keysComunes = keysA.filter(k => keysB.includes(k));
+
+  const diffs = [];
+
+  // Comparar campos con el mismo nombre
+  for (const k of keysComunes) {
+    const va = propsA[k];
+    const vb = propsB[k];
+
+    if (JSON.stringify(va) !== JSON.stringify(vb)) {
+      diffs.push({
+        campo: k,
+        encontrada: va,
+        trabajada: vb
+      });
+    }
+  }
+
+  // Comparar únicamente equivalencias donde AMBOS campos existen
+  mapeo.forEach(({ a, b }) => {
+    if (!a || !b) return;
+
+    const existeA = Object.prototype.hasOwnProperty.call(propsA, a);
+    const existeB = Object.prototype.hasOwnProperty.call(propsB, b);
+
+    // Si el campo no existe en alguna capa, ignorar esta equivalencia
+    if (!existeA || !existeB) return;
+
+    const va = propsA[a];
+    const vb = propsB[b];
+
+    if (JSON.stringify(va) !== JSON.stringify(vb)) {
+      diffs.push({
+        campo: `${a} ↔ ${b}`,
+        encontrada: va,
+        trabajada: vb
+      });
+    }
+  });
+
+  return diffs;
+}
+
+/* ============================================================
+   3) ESTADO DE LA APP Y CARGA DE ARCHIVOS
+   ============================================================ */
+const estadoApp = { datosA:null, datosB:null, capaA:null, capaB:null, resultados:null, filtroActivo:"todas" };
+
+function normalizaTexto(s) {
+  if (s === undefined || s === null) return "";
+  return String(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+const SINONIMOS_LLAVE = [
+  ["cvegeo","cve_geo","clave","claveinegi","cve","id"],
+  ["nomgeo","nombre","name","nom"],
+  ["cve_ent","claveent","entidad"],
+  ["cve_mun","clavemun","municipio"]
+];
+function sugerirCampoEquivalente(campo, listaDisponible) {
+  const nc = normalizaTexto(campo).replace(/[^a-z0-9]/g, "");
+  for (const grupo of SINONIMOS_LLAVE) {
+    if (grupo.includes(nc)) {
+      for (const cand of listaDisponible) {
+        if (grupo.includes(normalizaTexto(cand).replace(/[^a-z0-9]/g, ""))) return cand;
+      }
+    }
+  }
+  return listaDisponible.find(c => normalizaTexto(c) === normalizaTexto(campo)) || null;
+}
+function propKeys(feats) {
+  const k = new Set();
+  (feats || []).slice(0, 50).forEach(f => Object.keys(f.properties || {}).forEach(x => k.add(x)));
+  return [...k];
+}
+function extraeLlave(feature, campo, indice, normalizar) {
+  if (campo === "__index__") return "__idx__" + indice;
+  const v = feature.properties ? feature.properties[campo] : undefined;
+  return normalizar ? normalizaTexto(v) : String(v);
+}
+
+function poblarSelectorLlave() {
+  const featsA = estadoApp.capaA?.features, featsB = estadoApp.capaB?.features;
+  const selA = document.getElementById("keyFieldA");
+  const selB = document.getElementById("keyFieldB");
+  selA.innerHTML = '<option value="__index__">Usar orden de aparición</option>';
+  selB.innerHTML = '<option value="__index__">Usar orden de aparición</option>';
+  if (!featsA || !featsB) return;
+
+  const keysA = propKeys(featsA), keysB = propKeys(featsB);
+  keysA.forEach(k => selA.add(new Option(k, k)));
+  keysB.forEach(k => selB.add(new Option(k, k)));
+
+  let sugeridaA = keysA.find(k => keysB.includes(k));
+  let sugeridaB = sugeridaA;
+  if (!sugeridaA) {
+    for (const k of keysA) {
+      const cand = sugerirCampoEquivalente(k, keysB);
+      if (cand) { sugeridaA = k; sugeridaB = cand; break; }
+    }
+  }
+  if (sugeridaA) { selA.value = sugeridaA; selB.value = sugeridaB; }
+
+  renderMapeoCampos(keysA, keysB);
+}
+
+estadoApp.mapeoCampos = estadoApp.mapeoCampos || [];
+
+function renderMapeoCampos(keysA, keysB) {
+  const cont = document.getElementById("mapeoCamposList");
+  cont.innerHTML = "";
+  estadoApp.mapeoCampos.forEach((par, idx) => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; gap:8px; align-items:center; margin-bottom:6px;";
+    const selA = document.createElement("select");
+    const selB = document.createElement("select");
+    [selA, selB].forEach(s => { s.style.cssText = "flex:1; padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:12.5px;"; });
+    keysA.forEach(k => selA.add(new Option(k, k)));
+    keysB.forEach(k => selB.add(new Option(k, k)));
+    selA.value = par.a; selB.value = par.b;
+    selA.onchange = () => { estadoApp.mapeoCampos[idx].a = selA.value; };
+    selB.onchange = () => { estadoApp.mapeoCampos[idx].b = selB.value; };
+    const arrow = document.createElement("span");
+    arrow.textContent = "↔"; arrow.style.color = "var(--muted)";
+    const del = document.createElement("button");
+    del.textContent = "×"; del.type = "button";
+    del.style.cssText = "background:none; border:none; color:var(--bad); font-size:16px; cursor:pointer; padding:0 6px;";
+    del.onclick = () => { estadoApp.mapeoCampos.splice(idx, 1); renderMapeoCampos(keysA, keysB); };
+    row.append(selA, arrow, selB, del);
+    cont.appendChild(row);
+  });
+}
+document.getElementById("btnAddMapeo").addEventListener("click", () => {
+  const keysA = propKeys(estadoApp.capaA?.features || []);
+  const keysB = propKeys(estadoApp.capaB?.features || []);
+  if (!keysA.length || !keysB.length) return;
+  estadoApp.mapeoCampos.push({ a: keysA[0], b: keysB[0] });
+  renderMapeoCampos(keysA, keysB);
+});
+
+function actualizarBotonComparar() {
+  document.getElementById("btnComparar").disabled = !(estadoApp.capaA && estadoApp.capaB);
+}
+
+async function manejarArchivo(file, cual) {
+  const dropId = cual === "A" ? "dropA" : "dropB";
+  const selId = cual === "A" ? "layerA" : "layerB";
+  const dz = document.getElementById(dropId);
+  const statusEl = document.getElementById("loadStatus");
+  statusEl.className = "status-msg"; statusEl.textContent = `Leyendo ${file.name}…`;
+  try {
+    const { capas } = await leerArchivo(file);
+    if (cual === "A") estadoApp.datosA = capas; else estadoApp.datosB = capas;
+
+    const selectEl = document.getElementById(selId);
+    selectEl.innerHTML = "";
+    capas.forEach((c,i) => {
+      const opt = document.createElement("option");
+      opt.value = i; opt.textContent = `${c.nombre} (${c.features.length} elementos)`;
+      selectEl.appendChild(opt);
+    });
+    selectEl.style.display = capas.length > 1 ? "block" : "none";
+    selectEl.onchange = () => seleccionarCapa(cual, +selectEl.value);
+    seleccionarCapa(cual, 0);
+
+    dz.classList.add("loaded");
+    dz.querySelector(".titulo").textContent = file.name;
+    dz.querySelector(".detalle").textContent = `${capas.length} capa(s) detectada(s) en el archivo`;
+    statusEl.textContent = "";
+  } catch (e) {
+    statusEl.className = "status-msg error";
+    statusEl.textContent = `No se pudo leer ${file.name}: ${e.message}`;
+    dz.classList.remove("loaded");
+  }
+}
+
+function seleccionarCapa(cual, idx) {
+  const capas = cual === "A" ? estadoApp.datosA : estadoApp.datosB;
+  const capa = capas[idx];
+  if (cual === "A") estadoApp.capaA = capa; else estadoApp.capaB = capa;
+  poblarSelectorLlave();
+  actualizarBotonComparar();
+}
+
+["A","B"].forEach(cual => {
+  const dz = document.getElementById(cual === "A" ? "dropA" : "dropB");
+  const input = document.getElementById(cual === "A" ? "fileA" : "fileB");
+  dz.addEventListener("click", () => input.click());
+  input.addEventListener("change", e => { if (e.target.files[0]) manejarArchivo(e.target.files[0], cual); });
+  ["dragover","dragleave","drop"].forEach(evt => dz.addEventListener(evt, e => e.preventDefault()));
+  dz.addEventListener("dragover", () => dz.classList.add("drag"));
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+  dz.addEventListener("drop", e => {
+    dz.classList.remove("drag");
+    if (e.dataTransfer.files[0]) manejarArchivo(e.dataTransfer.files[0], cual);
+  });
+});
+
+/* ============================================================
+   4) COMPARACIÓN PRINCIPAL
+   ============================================================ */
+document.getElementById("btnComparar").addEventListener("click", ejecutarComparacion);
+
+function ejecutarComparacion() {
+  const keyFieldA = document.getElementById("keyFieldA").value;
+  const keyFieldB = document.getElementById("keyFieldB").value;
+  const normalizar = document.getElementById("normalizarLlave").checked;
+  const tolPct = +document.getElementById("tolArea").value;
+  const featsA = estadoApp.capaA.features, featsB = estadoApp.capaB.features;
+
+  const mapB = new Map();
+  featsB.forEach((f,i) => mapB.set(extraeLlave(f, keyFieldB, i, normalizar), f));
+  const usadosB = new Set();
+
+  const resultados = [];
+  featsA.forEach((fA, i) => {
+    const key = extraeLlave(fA, keyFieldA, i, normalizar);
+    const fB = mapB.get(key);
+    if (!fB) {
+      resultados.push({ key, nombre: nombreRef(fA), estado:"solo-a", featA:fA, featB:null, propDiffs:[], geomDiff:null });
+      return;
+    }
+    usadosB.add(key);
+    const propDiffs = compareProps(fA.properties, fB.properties, estadoApp.mapeoCampos);
+    const geomDiff = compareGeometries(fA.geometry, fB.geometry, tolPct);
+    let estado = geomDiff.estado;
+    if (propDiffs.length > 0 && estado === "identica") estado = "equivalente";
+    if (propDiffs.length > 0 && estado === "equivalente" && geomDiff.estado === "diferente") estado = "diferente";
+    resultados.push({ key, nombre: nombreRef(fA), estado, featA:fA, featB:fB, propDiffs, geomDiff });
+  });
+  featsB.forEach((fB, i) => {
+    const key = extraeLlave(fB, keyFieldB, i, normalizar);
+    if (!usadosB.has(key)) resultados.push({ key, nombre: nombreRef(fB), estado:"solo-b", featA:null, featB:fB, propDiffs:[], geomDiff:null });
+  });
+
+  estadoApp.resultados = resultados;
+  estadoApp.filtroActivo = "todas";
+  renderResumen(resultados);
+  renderFiltros(resultados);
+  renderTabla(resultados);
+  renderMapa(resultados);
+  document.getElementById("resultsPanel").style.display = "block";
+  document.getElementById("mapPanel").style.display = "block";
+}
+
+function nombreRef(f) {
+  const p = f.properties || {};
+  return p.NOMGEO || p.NOMBRE || p.nombre || p.name || p.NAME || "—";
+}
+
+/* ============================================================
+   5) RENDER: RESUMEN, FILTROS, TABLA, MAPA
+   ============================================================ */
+function renderResumen(res) {
+  const c = { identica:0, equivalente:0, diferente:0, "solo-a":0, "solo-b":0 };
+  res.forEach(r => c[r.estado]++);
+  const grid = document.getElementById("summaryGrid");
+  grid.innerHTML = `
+    <div class="stat"><div class="n">${res.length}</div><div class="l">Total comparadas</div></div>
+    <div class="stat ok"><div class="n">${c.identica}</div><div class="l">Idénticas</div></div>
+    <div class="stat warn"><div class="n">${c.equivalente}</div><div class="l">Equivalentes</div></div>
+    <div class="stat bad"><div class="n">${c.diferente}</div><div class="l">Diferentes</div></div>
+    <div class="stat"><div class="n">${c["solo-a"]}</div><div class="l">Solo en encontrada</div></div>
+    <div class="stat"><div class="n">${c["solo-b"]}</div><div class="l">Solo en trabajada</div></div>
+  `;
+}
+
+const FILTROS = [
+  ["todas","Todas"], ["identica","Idénticas"], ["equivalente","Equivalentes"],
+  ["diferente","Diferentes"], ["solo-a","Solo en encontrada"], ["solo-b","Solo en trabajada"]
+];
+function renderFiltros(res) {
+  const cont = document.getElementById("filters");
+  cont.innerHTML = "";
+  FILTROS.forEach(([val,label]) => {
+    const chip = document.createElement("div");
+    chip.className = "chip" + (val === estadoApp.filtroActivo ? " active" : "");
+    chip.textContent = label;
+    chip.onclick = () => { estadoApp.filtroActivo = val; renderFiltros(res); renderTabla(res); };
+    cont.appendChild(chip);
+  });
+}
+
+const ETIQUETA_ESTADO = { identica:"Idéntica", equivalente:"Equivalente", diferente:"Diferente", "solo-a":"Solo en encontrada", "solo-b":"Solo en trabajada" };
+
+function renderTabla(res) {
+  const filtrados = estadoApp.filtroActivo === "todas" ? res : res.filter(r => r.estado === estadoApp.filtroActivo);
+  const body = document.getElementById("resultsBody");
+  body.innerHTML = "";
+  filtrados.forEach((r, idx) => {
+    const tr = document.createElement("tr");
+    tr.className = "row-toggle";
+    tr.innerHTML = `
+      <td>▸</td>
+      <td>${r.key}</td>
+      <td>${r.nombre}</td>
+      <td>${r.propDiffs.length ? r.propDiffs.length + " campo(s)" : "—"}</td>
+      <td>${r.geomDiff && !r.geomDiff.sinGeom ? r.geomDiff.areaDiffPct.toFixed(1) + "% área" : "—"}</td>
+      <td><span class="badge ${r.estado}">${ETIQUETA_ESTADO[r.estado]}</span></td>
+    `;
+    const detailTr = document.createElement("tr");
+    detailTr.className = "detail-row";
+    detailTr.style.display = "none";
+    detailTr.innerHTML = `<td colspan="6">${renderDetalle(r)}</td>`;
+    tr.addEventListener("click", () => {
+      const abierta = detailTr.style.display !== "none";
+      detailTr.style.display = abierta ? "none" : "table-row";
+      tr.firstElementChild.textContent = abierta ? "▸" : "▾";
+    });
+    body.appendChild(tr);
+    body.appendChild(detailTr);
+  });
+  document.getElementById("tableCount").textContent = `Mostrando ${filtrados.length} de ${res.length} elementos`;
+}
+
+function renderDetalle(r) {
+  let html = "";
+  if (r.propDiffs.length) {
+    html += `<div class="mono-label" style="font-size:11.5px; font-weight:700; color:var(--secondary); margin-bottom:4px;">Diferencias de atributos</div>
+      <table class="diff-table"><thead><tr><th>Campo</th><th>Encontrada</th><th>Trabajada</th></tr></thead><tbody>`;
+    r.propDiffs.forEach(d => {
+      html += `<tr><td>${d.campo}</td><td class="old">${fmtVal(d.encontrada)}</td><td class="new">${fmtVal(d.trabajada)}</td></tr>`;
+    });
+    html += `</tbody></table>`;
+  } else if (r.featA && r.featB) {
+    html += `<div class="status-msg">Sin diferencias de atributos.</div>`;
+  }
+  if (r.geomDiff && !r.geomDiff.sinGeom) {
+    const g = r.geomDiff;
+    html += `<div class="geom-metrics">
+      <span>Vértices: <b>${g.vA}</b> → <b>${g.vB}</b></span>
+      <span>Área: <b>${g.areaA.toFixed(2)} km²</b> → <b>${g.areaB.toFixed(2)} km²</b> (${g.areaDiffPct.toFixed(2)}% dif.)</span>
+      <span>Centroide desplazado: <b>${g.centroidDistKm.toFixed(2)} km</b></span>
+      <span>Coincidencia exacta de coordenadas: <b>${g.exact ? "Sí" : "No"}</b></span>
+    </div>`;
+  } else if (!r.featA || !r.featB) {
+    html += `<div class="status-msg">Este elemento no tiene contraparte en la otra capa — no hay geometría que comparar.</div>`;
+  }
+  return html;
+}
+function fmtVal(v) { return v === undefined ? "<i>(no existe)</i>" : (v === null ? "<i>null</i>" : String(v)); }
+
+let leafletMap = null;
+function renderMapa(res) {
+  const cont = document.getElementById("map");
+  if (leafletMap) { leafletMap.remove(); }
+  leafletMap = L.map(cont).setView([23.6, -102.5], 5);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution:'&copy; OpenStreetMap &copy; CARTO', subdomains:'abcd', maxZoom:19
+  }).addTo(leafletMap);
+
+  const grupo = L.featureGroup().addTo(leafletMap);
+  res.forEach(r => {
+    if (r.featA?.geometry) {
+      L.geoJSON(r.featA.geometry, { style:{ color:"#9F2241", weight: r.estado==="identica"?1:2, fillOpacity: r.estado==="identica"?0.05:0.18 } })
+        .bindTooltip(`${r.nombre} — ${ETIQUETA_ESTADO[r.estado]} (encontrada)`).addTo(grupo);
+    }
+    if (r.featB?.geometry && r.estado !== "identica") {
+      L.geoJSON(r.featB.geometry, { style:{ color:"#13322B", weight:2, fillOpacity:0.12, dashArray: r.estado==="equivalente"?"4 3":null } })
+        .bindTooltip(`${r.nombre} — ${ETIQUETA_ESTADO[r.estado]} (trabajada)`).addTo(grupo);
+    }
+  });
+  try { if (grupo.getLayers().length) leafletMap.fitBounds(grupo.getBounds(), { padding:[20,20] }); } catch(e){}
+}
+
+/* ============================================================
+   6) EXPORTAR CSV
+   ============================================================ */
+document.getElementById("btnCSV").addEventListener("click", () => {
+  const res = estadoApp.resultados || [];
+  const filas = [["llave","nombre","estado","campos_con_diferencia","diferencia_area_pct","centroide_desplazado_km"]];
+  res.forEach(r => filas.push([
+    r.key, r.nombre, ETIQUETA_ESTADO[r.estado],
+    r.propDiffs.map(d=>d.campo).join(" / "),
+    r.geomDiff && !r.geomDiff.sinGeom ? r.geomDiff.areaDiffPct.toFixed(2) : "",
+    r.geomDiff && !r.geomDiff.sinGeom ? r.geomDiff.centroidDistKm.toFixed(2) : ""
+  ]));
+  const csv = "\uFEFF" + filas.map(f => f.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "comparacion_capas.csv";
+  a.click();
+});
+</script>
+</body>
+</html>
