@@ -10,6 +10,8 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root{
     --primary:#9F2241; --primary-dark:#6A1C32; --secondary:#13322B; --accent:#BC955C;
@@ -153,15 +155,15 @@
       <div class="dropzone a" id="dropA">
         <span class="tag">Capa encontrada</span>
         <div class="titulo">Arrastra o haz clic para elegir</div>
-        <div class="detalle">.geojson, .json o .gpkg — la que descargaste de un portal oficial</div>
-        <input type="file" id="fileA" accept=".geojson,.json,.gpkg">
+        <div class="detalle">.geojson, .json, .gpkg, .tif o .tiff — la que descargaste de un portal oficial</div>
+        <input type="file" id="fileA" accept=".geojson,.json,.gpkg,.tif,.tiff">
         <select id="layerA" style="display:none;"></select>
       </div>
       <div class="dropzone b" id="dropB">
         <span class="tag">Capa trabajada</span>
         <div class="titulo">Arrastra o haz clic para elegir</div>
-        <div class="detalle">.geojson, .json o .gpkg — tu versión ya personalizada/simplificada</div>
-        <input type="file" id="fileB" accept=".geojson,.json,.gpkg">
+        <div class="detalle">.geojson, .json, .gpkg, .tif o .tiff — tu versión ya personalizada/simplificada</div>
+        <input type="file" id="fileB" accept=".geojson,.json,.gpkg,.tif,.tiff">
         <select id="layerB" style="display:none;"></select>
       </div>
     </div>
@@ -225,7 +227,7 @@
 
     <div class="foot-actions">
       <span class="status-msg" id="tableCount"></span>
-      <button class="btn secondary small" id="btnCSV">Exportar tabla a CSV</button>
+      <button class="btn secondary small" id="btnCSV">Exportar tabla a Excel</button>
     </div>
   </div>
 
@@ -329,10 +331,82 @@ async function leerGeoPackage(file) {
   return { capas };
 }
 
+async function leerGeoTIFF(file) {
+  const buffer = await file.arrayBuffer();
+
+  const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+  const image = await tiff.getImage();
+
+  const width = image.getWidth();
+  const height = image.getHeight();
+
+  const samples = image.getSamplesPerPixel();
+
+  const rasters = await image.readRasters({
+    interleave: false
+  });
+
+  const bbox = image.getBoundingBox();
+  const resolution = image.getResolution();
+
+  const fileDirectory = image.getFileDirectory();
+  const geoKeys = image.getGeoKeys();
+
+  let crs = null;
+
+  if (geoKeys) {
+    if (geoKeys.ProjectedCSTypeGeoKey) {
+      crs = `EPSG:${geoKeys.ProjectedCSTypeGeoKey}`;
+    } else if (geoKeys.GeographicTypeGeoKey) {
+      crs = `EPSG:${geoKeys.GeographicTypeGeoKey}`;
+    }
+  }
+
+  return {
+    nombre: file.name.replace(/\.(tif|tiff)$/i, ""),
+
+    file,
+    tiff,
+    image,
+
+    width,
+    height,
+
+    samples,
+
+    rasters,
+
+    bbox,
+    resolution,
+
+    crs,
+
+    fileDirectory,
+    geoKeys
+  };
+}
+
 async function leerArchivo(file) {
   const ext = file.name.split(".").pop().toLowerCase();
-  if (ext === "gpkg") return leerGeoPackage(file);
-  return leerGeoJSON(file);
+
+  if (ext === "tif" || ext === "tiff") {
+    return {
+      tipo: "raster",
+      raster: await leerGeoTIFF(file)
+    };
+  }
+
+  if (ext === "gpkg") {
+    return {
+      tipo: "vector",
+      capas: (await leerGeoPackage(file)).capas
+    };
+  }
+
+  return {
+    tipo: "vector",
+    capas: (await leerGeoJSON(file)).capas
+  };
 }
 
 /* ============================================================
@@ -389,6 +463,35 @@ function compareGeometries(gA, gB, tolPct) {
   if (!exact) estado = (areaDiffPct <= tolPct && centroidDistKm < 10) ? "equivalente" : "diferente";
   return { estado, exact, vA, vB, areaA, areaB, areaDiffPct, centroidDistKm };
 }
+function valoresEquivalentes(a, b) {
+  // Ambos vacíos/null/undefined
+  if (
+    (a === null || a === undefined || a === "") &&
+    (b === null || b === undefined || b === "")
+  ) {
+    return true;
+  }
+
+  // Convertir ambos a texto normalizado
+  const va = normalizaTexto(a);
+  const vb = normalizaTexto(b);
+
+  // Si son iguales como texto
+  if (va === vb) return true;
+
+  // Si ambos representan números, compararlos como números
+  // Esto hace equivalentes:
+  // 011 ↔ 11
+  // 2004 ↔ "2004"
+  // 0011 ↔ 11
+  if (va !== "" && vb !== "" && !isNaN(Number(va)) && !isNaN(Number(vb))) {
+    return Number(va) === Number(vb);
+  }
+
+  return false;
+}
+
+
 function compareProps(pA, pB, mapeo = []) {
   const propsA = pA || {};
   const propsB = pB || {};
@@ -396,7 +499,7 @@ function compareProps(pA, pB, mapeo = []) {
   const mapeadosA = new Set(mapeo.map(m => m.a));
   const mapeadosB = new Set(mapeo.map(m => m.b));
 
-  // Solo comparar campos que existen en AMBAS capas
+  // Solo comparar campos que existen en ambas capas
   const keysA = Object.keys(propsA).filter(k => !mapeadosA.has(k));
   const keysB = Object.keys(propsB).filter(k => !mapeadosB.has(k));
 
@@ -409,7 +512,7 @@ function compareProps(pA, pB, mapeo = []) {
     const va = propsA[k];
     const vb = propsB[k];
 
-    if (JSON.stringify(va) !== JSON.stringify(vb)) {
+    if (!valoresEquivalentes(va, vb)) {
       diffs.push({
         campo: k,
         encontrada: va,
@@ -418,20 +521,20 @@ function compareProps(pA, pB, mapeo = []) {
     }
   }
 
-  // Comparar únicamente equivalencias donde AMBOS campos existen
+  // Comparar equivalencias configuradas
   mapeo.forEach(({ a, b }) => {
     if (!a || !b) return;
 
     const existeA = Object.prototype.hasOwnProperty.call(propsA, a);
     const existeB = Object.prototype.hasOwnProperty.call(propsB, b);
 
-    // Si el campo no existe en alguna capa, ignorar esta equivalencia
+    // Si no existe en alguna capa, ignorar
     if (!existeA || !existeB) return;
 
     const va = propsA[a];
     const vb = propsB[b];
 
-    if (JSON.stringify(va) !== JSON.stringify(vb)) {
+    if (!valoresEquivalentes(va, vb)) {
       diffs.push({
         campo: `${a} ↔ ${b}`,
         encontrada: va,
@@ -446,7 +549,24 @@ function compareProps(pA, pB, mapeo = []) {
 /* ============================================================
    3) ESTADO DE LA APP Y CARGA DE ARCHIVOS
    ============================================================ */
-const estadoApp = { datosA:null, datosB:null, capaA:null, capaB:null, resultados:null, filtroActivo:"todas" };
+const estadoApp = {
+  datosA: null,
+  datosB: null,
+
+  capaA: null,
+  capaB: null,
+
+  rasterA: null,
+  rasterB: null,
+
+  tipoA: null,
+  tipoB: null,
+
+  resultados: null,
+  resultadoRaster: null,
+
+  filtroActivo: "todas"
+};
 
 function normalizaTexto(s) {
   if (s === undefined || s === null) return "";
@@ -477,8 +597,20 @@ function propKeys(feats) {
 }
 function extraeLlave(feature, campo, indice, normalizar) {
   if (campo === "__index__") return "__idx__" + indice;
+
   const v = feature.properties ? feature.properties[campo] : undefined;
-  return normalizar ? normalizaTexto(v) : String(v);
+
+  if (!normalizar) return String(v);
+
+  let valor = normalizaTexto(v);
+
+  // Si la llave es numérica, eliminar ceros a la izquierda
+  // Ejemplo: 011 → 11, 0011 → 11
+  if (/^\d+$/.test(valor)) {
+    valor = String(Number(valor));
+  }
+
+  return valor;
 }
 
 function poblarSelectorLlave() {
@@ -541,37 +673,124 @@ document.getElementById("btnAddMapeo").addEventListener("click", () => {
 });
 
 function actualizarBotonComparar() {
-  document.getElementById("btnComparar").disabled = !(estadoApp.capaA && estadoApp.capaB);
+  const hayVector =
+    estadoApp.tipoA === "vector" &&
+    estadoApp.tipoB === "vector" &&
+    estadoApp.capaA &&
+    estadoApp.capaB;
+
+  const hayRaster =
+    estadoApp.tipoA === "raster" &&
+    estadoApp.tipoB === "raster" &&
+    estadoApp.rasterA &&
+    estadoApp.rasterB;
+
+  document.getElementById("btnComparar").disabled =
+    !(hayVector || hayRaster);
 }
 
 async function manejarArchivo(file, cual) {
   const dropId = cual === "A" ? "dropA" : "dropB";
   const selId = cual === "A" ? "layerA" : "layerB";
+
   const dz = document.getElementById(dropId);
   const statusEl = document.getElementById("loadStatus");
-  statusEl.className = "status-msg"; statusEl.textContent = `Leyendo ${file.name}…`;
+
+  statusEl.className = "status-msg";
+  statusEl.textContent = `Leyendo ${file.name}…`;
+
   try {
-    const { capas } = await leerArchivo(file);
-    if (cual === "A") estadoApp.datosA = capas; else estadoApp.datosB = capas;
+    const resultado = await leerArchivo(file);
+
+    // ==========================================
+    // RASTER
+    // ==========================================
+    if (resultado.tipo === "raster") {
+
+      if (cual === "A") {
+        estadoApp.rasterA = resultado.raster;
+        estadoApp.tipoA = "raster";
+      } else {
+        estadoApp.rasterB = resultado.raster;
+        estadoApp.tipoB = "raster";
+      }
+
+      // Limpiar posibles capas vectoriales anteriores
+      if (cual === "A") {
+        estadoApp.datosA = null;
+        estadoApp.capaA = null;
+      } else {
+        estadoApp.datosB = null;
+        estadoApp.capaB = null;
+      }
+
+      document.getElementById(selId).style.display = "none";
+
+      dz.classList.add("loaded");
+
+      dz.querySelector(".titulo").textContent = file.name;
+
+      dz.querySelector(".detalle").textContent =
+        `Raster ${resultado.raster.width} × ${resultado.raster.height} · ` +
+        `${resultado.raster.samples} banda(s)`;
+
+      statusEl.textContent = "";
+
+      actualizarBotonComparar();
+
+      return;
+    }
+
+    // ==========================================
+    // VECTORIAL
+    // ==========================================
+    const capas = resultado.capas;
+
+    if (cual === "A") {
+      estadoApp.datosA = capas;
+      estadoApp.tipoA = "vector";
+    } else {
+      estadoApp.datosB = capas;
+      estadoApp.tipoB = "vector";
+    }
 
     const selectEl = document.getElementById(selId);
+
     selectEl.innerHTML = "";
-    capas.forEach((c,i) => {
+
+    capas.forEach((c, i) => {
       const opt = document.createElement("option");
-      opt.value = i; opt.textContent = `${c.nombre} (${c.features.length} elementos)`;
+
+      opt.value = i;
+      opt.textContent =
+        `${c.nombre} (${c.features.length} elementos)`;
+
       selectEl.appendChild(opt);
     });
+
     selectEl.style.display = capas.length > 1 ? "block" : "none";
-    selectEl.onchange = () => seleccionarCapa(cual, +selectEl.value);
+
+    selectEl.onchange = () =>
+      seleccionarCapa(cual, +selectEl.value);
+
     seleccionarCapa(cual, 0);
 
     dz.classList.add("loaded");
+
     dz.querySelector(".titulo").textContent = file.name;
-    dz.querySelector(".detalle").textContent = `${capas.length} capa(s) detectada(s) en el archivo`;
+
+    dz.querySelector(".detalle").textContent =
+      `${capas.length} capa(s) detectada(s) en el archivo`;
+
     statusEl.textContent = "";
+
   } catch (e) {
+
     statusEl.className = "status-msg error";
-    statusEl.textContent = `No se pudo leer ${file.name}: ${e.message}`;
+
+    statusEl.textContent =
+      `No se pudo leer ${file.name}: ${e.message}`;
+
     dz.classList.remove("loaded");
   }
 }
@@ -603,7 +822,636 @@ function seleccionarCapa(cual, idx) {
    ============================================================ */
 document.getElementById("btnComparar").addEventListener("click", ejecutarComparacion);
 
+function compararRasters(rA, rB) {
+
+  console.log("=== COMPARACIÓN RASTER ===");
+
+  console.log("Raster A:", rA);
+  console.log("Raster B:", rB);
+
+
+  // ==========================================================
+  // 1. INFORMACIÓN BÁSICA
+  // ==========================================================
+
+  const resAX = Math.abs(rA.resolution[0]);
+  const resAY = Math.abs(rA.resolution[1]);
+
+  const resBX = Math.abs(rB.resolution[0]);
+  const resBY = Math.abs(rB.resolution[1]);
+
+
+  // ==========================================================
+  // 2. COMPROBAR CRS
+  // ==========================================================
+
+  const mismoCRS =
+    rA.crs === rB.crs &&
+    rA.crs === "EPSG:4326";
+
+
+  // ==========================================================
+  // 3. COMPROBAR RESOLUCIONES
+  // ==========================================================
+
+  const toleranciaResolucion = 1e-9;
+
+  const mismaResolucion =
+    Math.abs(resAX - resBX) < toleranciaResolucion &&
+    Math.abs(resAY - resBY) < toleranciaResolucion;
+
+
+  // ==========================================================
+  // 4. CALCULAR INTERSECCIÓN GEOGRÁFICA
+  // ==========================================================
+
+  const minX = Math.max(
+    rA.bbox[0],
+    rB.bbox[0]
+  );
+
+  const minY = Math.max(
+    rA.bbox[1],
+    rB.bbox[1]
+  );
+
+  const maxX = Math.min(
+    rA.bbox[2],
+    rB.bbox[2]
+  );
+
+  const maxY = Math.min(
+    rA.bbox[3],
+    rB.bbox[3]
+  );
+
+
+  const hayInterseccion =
+    minX < maxX &&
+    minY < maxY;
+
+
+  // ==========================================================
+  // 5. RESULTADO BASE
+  // ==========================================================
+
+  const resultado = {
+
+    tipo: "raster",
+
+    estado: "diferente",
+
+    metadata: {
+
+      mismoCRS,
+
+      mismaResolucion,
+
+      hayInterseccion,
+
+      crsA: rA.crs,
+      crsB: rB.crs,
+
+      resolucionA: rA.resolution,
+      resolucionB: rB.resolution,
+
+      widthA: rA.width,
+      heightA: rA.height,
+
+      widthB: rB.width,
+      heightB: rB.height,
+
+      bboxA: rA.bbox,
+      bboxB: rB.bbox
+
+    },
+
+
+    // ----------------------------------------------------------
+    // INTERSECCIÓN
+    // ----------------------------------------------------------
+
+    interseccion: {
+
+      bbox: hayInterseccion
+        ? [minX, minY, maxX, maxY]
+        : null,
+
+      width: 0,
+      height: 0,
+
+      pixelesComparados: 0
+
+    },
+
+
+    // ----------------------------------------------------------
+    // ESTADÍSTICAS
+    // ----------------------------------------------------------
+
+    pixelesTotalesA:
+      rA.width * rA.height,
+
+    pixelesTotalesB:
+      rB.width * rB.height,
+
+    pixelesComparados: 0,
+
+    pixelesIguales: 0,
+
+    pixelesDiferentes: 0,
+
+    porcentajeDiferencia: 0,
+
+    diferenciaMin: null,
+
+    diferenciaMax: null,
+
+    diferenciaPromedio: null,
+
+    // ----------------------------------------------------------
+    // MAPA DE DIFERENCIAS
+    // ----------------------------------------------------------
+
+    mapaDiferencias: null
+
+  };
+
+
+  // ==========================================================
+  // 6. VALIDACIONES
+  // ==========================================================
+
+  if (!mismoCRS) {
+
+    resultado.estado = "diferente";
+
+    console.warn(
+      "Los rasters no tienen el mismo CRS."
+    );
+
+    return resultado;
+  }
+
+
+  if (!mismaResolucion) {
+
+    resultado.estado = "diferente";
+
+    console.warn(
+      "Los rasters tienen diferente resolución."
+    );
+
+    return resultado;
+  }
+
+
+  if (!hayInterseccion) {
+
+    resultado.estado = "diferente";
+
+    console.warn(
+      "Los rasters no tienen intersección espacial."
+    );
+
+    return resultado;
+  }
+
+
+  // ==========================================================
+  // 7. INFORMACIÓN DE LA INTERSECCIÓN
+  // ==========================================================
+
+  const anchoInterseccion =
+    maxX - minX;
+
+  const altoInterseccion =
+    maxY - minY;
+
+
+  const columnas =
+    Math.ceil(
+      anchoInterseccion / resAX
+    );
+
+  const filas =
+    Math.ceil(
+      altoInterseccion / resAY
+    );
+
+
+  resultado.interseccion.width =
+    columnas;
+
+  resultado.interseccion.height =
+    filas;
+
+
+  console.log(
+    "Intersección:",
+    resultado.interseccion
+  );
+
+
+  // ==========================================================
+  // 8. OBTENER BANDAS
+  // ==========================================================
+
+  const bandaA =
+    rA.rasters[0];
+
+  const bandaB =
+    rB.rasters[0];
+
+
+  // ==========================================================
+  // 9. MAPA DE DIFERENCIAS
+  // ==========================================================
+
+  /*
+    0 = sin diferencia
+    1 = diferente
+    2 = sin dato / no comparable
+  */
+
+  const mapa =
+    new Uint8Array(
+      columnas * filas
+    );
+
+
+  // ==========================================================
+  // 10. ESTADÍSTICAS
+  // ==========================================================
+
+  let iguales = 0;
+
+  let diferentes = 0;
+
+  let sumaDiferencias = 0;
+
+  let diferenciaMin = Infinity;
+
+  let diferenciaMax = -Infinity;
+
+
+  // ==========================================================
+  // 11. COMPARACIÓN PIXEL POR PIXEL
+  // ==========================================================
+
+  for (let fila = 0; fila < filas; fila++) {
+
+    /*
+      Latitud del centro del píxel.
+      Como resolution Y es negativa, partimos
+      desde la parte superior.
+    */
+
+    const lat =
+      maxY -
+      (fila + 0.5) * resAY;
+
+
+    for (
+      let columna = 0;
+      columna < columnas;
+      columna++
+    ) {
+
+      const lon =
+        minX +
+        (columna + 0.5) * resAX;
+
+
+      // ======================================================
+      // ÍNDICE DEL PIXEL EN RASTER A
+      // ======================================================
+
+      const colA =
+        Math.floor(
+          (lon - rA.bbox[0]) /
+          resAX
+        );
+
+      const filaA =
+        Math.floor(
+          (rA.bbox[3] - lat) /
+          resAY
+        );
+
+
+      // ======================================================
+      // ÍNDICE DEL PIXEL EN RASTER B
+      // ======================================================
+
+      const colB =
+        Math.floor(
+          (lon - rB.bbox[0]) /
+          resBX
+        );
+
+      const filaB =
+        Math.floor(
+          (rB.bbox[3] - lat) /
+          resBY
+        );
+
+
+      // ======================================================
+      // VALIDAR ÍNDICES
+      // ======================================================
+
+      if (
+        colA < 0 ||
+        colA >= rA.width ||
+        filaA < 0 ||
+        filaA >= rA.height ||
+        colB < 0 ||
+        colB >= rB.width ||
+        filaB < 0 ||
+        filaB >= rB.height
+      ) {
+
+        mapa[
+          fila * columnas +
+          columna
+        ] = 2;
+
+        continue;
+      }
+
+
+      // ======================================================
+      // OBTENER VALORES
+      // ======================================================
+
+      const indiceA =
+        filaA * rA.width +
+        colA;
+
+      const indiceB =
+        filaB * rB.width +
+        colB;
+
+
+      const valorA =
+        Number(bandaA[indiceA]);
+
+      const valorB =
+        Number(bandaB[indiceB]);
+
+
+      // ======================================================
+      // NO DATA / VALORES INVÁLIDOS
+      // ======================================================
+
+      if (
+        !Number.isFinite(valorA) ||
+        !Number.isFinite(valorB)
+      ) {
+
+        mapa[
+          fila * columnas +
+          columna
+        ] = 2;
+
+        continue;
+      }
+
+
+      // ======================================================
+      // DIFERENCIA
+      // ======================================================
+
+      const diferencia =
+        Math.abs(
+          valorA - valorB
+        );
+
+
+      /*
+        Tolerancia de valores.
+
+        Por ahora usamos una tolerancia muy pequeña.
+        Después podemos convertirla en un campo
+        configurable desde la interfaz.
+      */
+
+      const toleranciaValor = 0.000001;
+
+
+      const indiceMapa =
+        fila * columnas +
+        columna;
+
+
+      if (
+        diferencia <=
+        toleranciaValor
+      ) {
+
+        mapa[indiceMapa] = 0;
+
+        iguales++;
+
+      } else {
+
+        mapa[indiceMapa] = 1;
+
+        diferentes++;
+
+        sumaDiferencias +=
+          diferencia;
+
+        if (
+          diferencia <
+          diferenciaMin
+        ) {
+          diferenciaMin =
+            diferencia;
+        }
+
+        if (
+          diferencia >
+          diferenciaMax
+        ) {
+          diferenciaMax =
+            diferencia;
+        }
+
+      }
+
+    }
+
+  }
+
+
+  // ==========================================================
+  // 12. GUARDAR RESULTADOS
+  // ==========================================================
+
+  resultado.mapaDiferencias =
+    mapa;
+
+
+  resultado.pixelesComparados =
+    iguales +
+    diferentes;
+
+
+  resultado.pixelesIguales =
+    iguales;
+
+
+  resultado.pixelesDiferentes =
+    diferentes;
+
+
+  resultado.interseccion.pixelesComparados =
+    resultado.pixelesComparados;
+
+
+  // ==========================================================
+  // 13. PORCENTAJES
+  // ==========================================================
+
+  if (
+    resultado.pixelesComparados > 0
+  ) {
+
+    resultado.porcentajeDiferencia =
+      (
+        diferentes /
+        resultado.pixelesComparados
+      ) * 100;
+
+  } else {
+
+    resultado.porcentajeDiferencia =
+      0;
+
+  }
+
+
+  // ==========================================================
+  // 14. DIFERENCIA PROMEDIO
+  // ==========================================================
+
+  if (diferentes > 0) {
+
+    resultado.diferenciaPromedio =
+      sumaDiferencias /
+      diferentes;
+
+  } else {
+
+    resultado.diferenciaPromedio =
+      0;
+
+  }
+
+
+  resultado.diferenciaMin =
+    diferenciaMin === Infinity
+      ? 0
+      : diferenciaMin;
+
+
+  resultado.diferenciaMax =
+    diferenciaMax === -Infinity
+      ? 0
+      : diferenciaMax;
+
+
+  // ==========================================================
+  // 15. ESTADO FINAL
+  // ==========================================================
+
+  resultado.estado =
+    diferentes === 0
+      ? "identica"
+      : "diferente";
+
+
+  // ==========================================================
+  // 16. LOG FINAL
+  // ==========================================================
+
+  console.log(
+    "Resultado Raster:",
+    {
+      estado: resultado.estado,
+
+      pixelesComparados:
+        resultado.pixelesComparados,
+
+      pixelesIguales:
+        resultado.pixelesIguales,
+
+      pixelesDiferentes:
+        resultado.pixelesDiferentes,
+
+      porcentajeDiferencia:
+        resultado.porcentajeDiferencia,
+
+      diferenciaPromedio:
+        resultado.diferenciaPromedio,
+
+      diferenciaMin:
+        resultado.diferenciaMin,
+
+      diferenciaMax:
+        resultado.diferenciaMax
+    }
+  );
+
+
+  return resultado;
+}
+
 function ejecutarComparacion() {
+
+  // ==========================================
+  // RASTER
+  // ==========================================
+
+  if (
+    estadoApp.tipoA === "raster" &&
+    estadoApp.tipoB === "raster"
+  ) {
+
+    const resultadoRaster =
+      compararRasters(
+        estadoApp.rasterA,
+        estadoApp.rasterB
+      );
+
+    estadoApp.resultadoRaster =
+      resultadoRaster;
+
+    estadoApp.filtroActivo = "todas";
+
+    console.log("Resultado Raster:", resultadoRaster);
+
+    renderResultadoRaster(resultadoRaster);
+
+    document.getElementById("resultsPanel").style.display = "block";
+    document.getElementById("mapPanel").style.display = "block";
+
+    renderMapaRaster(
+      estadoApp.rasterA,
+      estadoApp.rasterB,
+      resultadoRaster
+    );
+
+    return;
+  }
+
+
+  // ==========================================
+  // VECTORIAL
+  // ==========================================
+
   const keyFieldA = document.getElementById("keyFieldA").value;
   const keyFieldB = document.getElementById("keyFieldB").value;
   const normalizar = document.getElementById("normalizarLlave").checked;
@@ -665,6 +1513,96 @@ function renderResumen(res) {
     <div class="stat"><div class="n">${c["solo-a"]}</div><div class="l">Solo en encontrada</div></div>
     <div class="stat"><div class="n">${c["solo-b"]}</div><div class="l">Solo en trabajada</div></div>
   `;
+}
+
+function renderResultadoRaster(r) {
+
+  const grid =
+    document.getElementById("summaryGrid");
+
+  const estado =
+    r.estado === "identica"
+      ? "Idéntico"
+      : "Diferente";
+
+
+  grid.innerHTML = `
+
+    <div class="stat">
+      <div class="n">${r.pixelesComparados.toLocaleString()}</div>
+      <div class="l">Píxeles comparados</div>
+    </div>
+
+    <div class="stat ok">
+      <div class="n">${r.pixelesIguales.toLocaleString()}</div>
+      <div class="l">Píxeles iguales</div>
+    </div>
+
+    <div class="stat bad">
+      <div class="n">${r.pixelesDiferentes.toLocaleString()}</div>
+      <div class="l">Píxeles diferentes</div>
+    </div>
+
+    <div class="stat">
+      <div class="n">${r.porcentajeDiferencia.toFixed(2)}%</div>
+      <div class="l">Diferencia</div>
+    </div>
+
+    <div class="stat">
+      <div class="n">
+        ${r.diferenciaPromedio !== null && r.diferenciaPromedio !== undefined
+          ? r.diferenciaPromedio.toFixed(4)
+          : "—"}
+      </div>
+      <div class="l">Dif. promedio</div>
+    </div>
+
+    <div class="stat">
+      <div class="n">${estado}</div>
+      <div class="l">Estado</div>
+    </div>
+
+  `;
+
+
+  // Tabla
+  const body =
+    document.getElementById("resultsBody");
+
+  body.innerHTML = `
+
+    <tr>
+
+      <td>Raster</td>
+
+      <td>
+        ${r.widthA} × ${r.heightA}
+      </td>
+
+      <td>
+        ${r.crsA || "No definido"}
+      </td>
+
+      <td>
+        ${r.pixelesDiferentes.toLocaleString()}
+      </td>
+
+      <td>
+        ${r.porcentajeDiferencia.toFixed(2)}%
+      </td>
+
+      <td>
+        <span class="badge ${r.estado}">
+          ${estado}
+        </span>
+      </td>
+
+    </tr>
+
+  `;
+
+  document.getElementById("tableCount").textContent =
+    "Resultado de comparación Raster";
 }
 
 const FILTROS = [
@@ -742,6 +1680,397 @@ function renderDetalle(r) {
 }
 function fmtVal(v) { return v === undefined ? "<i>(no existe)</i>" : (v === null ? "<i>null</i>" : String(v)); }
 
+function renderMapaRaster(rA, rB, resultado) {
+
+  console.log(
+    "Renderizando mapa de diferencias raster…",
+    resultado
+  );
+
+
+  const cont =
+    document.getElementById("map");
+
+
+  // ==========================================================
+  // ELIMINAR MAPA ANTERIOR
+  // ==========================================================
+
+  if (leafletMap) {
+
+    leafletMap.remove();
+
+    leafletMap = null;
+
+  }
+
+
+  // ==========================================================
+  // CREAR MAPA
+  // ==========================================================
+
+  leafletMap =
+    L.map(cont);
+
+
+  L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    {
+      attribution:
+        "© OpenStreetMap © CARTO",
+
+      subdomains:
+        "abcd",
+
+      maxZoom:
+        19
+    }
+  ).addTo(leafletMap);
+
+
+  // ==========================================================
+  // COMPROBAR INTERSECCIÓN
+  // ==========================================================
+
+  if (
+    !resultado.interseccion ||
+    !resultado.interseccion.bbox
+  ) {
+
+    console.warn(
+      "No existe una intersección espacial."
+    );
+
+    leafletMap.setView(
+      [23.6, -102.5],
+      5
+    );
+
+    return;
+  }
+
+
+  const bbox =
+    resultado.interseccion.bbox;
+
+
+  // ==========================================================
+  // BOUNDS DE LA INTERSECCIÓN
+  // ==========================================================
+
+  const bounds = [
+
+    [
+      bbox[1],
+      bbox[0]
+    ],
+
+    [
+      bbox[3],
+      bbox[2]
+    ]
+
+  ];
+
+
+  leafletMap.fitBounds(
+    bounds,
+    {
+      padding:
+        [20, 20]
+    }
+  );
+
+
+  // ==========================================================
+  // DIMENSIONES DEL MAPA DE DIFERENCIAS
+  // ==========================================================
+
+  const width =
+    resultado.interseccion.width;
+
+  const height =
+    resultado.interseccion.height;
+
+
+  const mapa =
+    resultado.mapaDiferencias;
+
+
+  if (!mapa) {
+
+    console.warn(
+      "No existe mapa de diferencias."
+    );
+
+    return;
+
+  }
+
+
+  // ==========================================================
+  // CREAR CANVAS
+  // ==========================================================
+
+  const canvas =
+    document.createElement(
+      "canvas"
+    );
+
+
+  canvas.width =
+    width;
+
+  canvas.height =
+    height;
+
+
+  const ctx =
+    canvas.getContext(
+      "2d"
+    );
+
+
+  const imageData =
+    ctx.createImageData(
+      width,
+      height
+    );
+
+
+  const data =
+    imageData.data;
+
+
+  // ==========================================================
+  // PINTAR DIFERENCIAS
+  // ==========================================================
+
+  for (
+    let i = 0;
+    i < mapa.length;
+    i++
+  ) {
+
+    const pos =
+      i * 4;
+
+
+    // ========================================================
+    // DIFERENTE
+    // ========================================================
+
+    if (
+      mapa[i] === 1
+    ) {
+
+      /*
+        Rojo semitransparente
+      */
+
+      data[pos] =
+        220;
+
+      data[pos + 1] =
+        40;
+
+      data[pos + 2] =
+        40;
+
+      data[pos + 3] =
+        180;
+
+
+    }
+
+    // ========================================================
+    // SIN DATO / NO COMPARABLE
+    // ========================================================
+
+    else if (
+      mapa[i] === 2
+    ) {
+
+      /*
+        Transparente.
+        No se considera diferencia.
+      */
+
+      data[pos] =
+        0;
+
+      data[pos + 1] =
+        0;
+
+      data[pos + 2] =
+        0;
+
+      data[pos + 3] =
+        0;
+
+
+    }
+
+    // ========================================================
+    // IGUAL
+    // ========================================================
+
+    else {
+
+      /*
+        Transparente.
+      */
+
+      data[pos] =
+        0;
+
+      data[pos + 1] =
+        0;
+
+      data[pos + 2] =
+        0;
+
+      data[pos + 3] =
+        0;
+
+    }
+
+  }
+
+
+  ctx.putImageData(
+    imageData,
+    0,
+    0
+  );
+
+
+  // ==========================================================
+  // CONVERTIR CANVAS A IMAGEN
+  // ==========================================================
+
+  const imagen =
+    canvas.toDataURL(
+      "image/png"
+    );
+
+
+  // ==========================================================
+  // OVERLAY
+  // ==========================================================
+
+  L.imageOverlay(
+    imagen,
+    bounds,
+    {
+
+      opacity:
+        0.8,
+
+      interactive:
+        false
+
+    }
+  ).addTo(
+    leafletMap
+  );
+
+
+  // ==========================================================
+  // CONTROL DE INFORMACIÓN
+  // ==========================================================
+
+  const infoControl =
+    L.control({
+      position:
+        "topright"
+    });
+
+
+  infoControl.onAdd =
+    function () {
+
+      const div =
+        L.DomUtil.create(
+          "div",
+          "raster-info-control"
+        );
+
+
+      div.style.background =
+        "white";
+
+
+      div.style.padding =
+        "10px";
+
+
+      div.style.borderRadius =
+        "6px";
+
+
+      div.style.boxShadow =
+        "0 1px 5px rgba(0,0,0,.3)";
+
+
+      div.innerHTML = `
+
+        <div
+          style="
+            font-weight:700;
+            margin-bottom:5px;
+          "
+        >
+          Diferencias Raster
+        </div>
+
+
+        <div>
+          Píxeles comparados:
+          <b>
+            ${resultado.pixelesComparados.toLocaleString()}
+          </b>
+        </div>
+
+
+        <div>
+          Píxeles diferentes:
+          <b>
+            ${resultado.pixelesDiferentes.toLocaleString()}
+          </b>
+        </div>
+
+
+        <div>
+          Diferencia:
+          <b>
+            ${resultado.porcentajeDiferencia.toFixed(2)}%
+          </b>
+        </div>
+
+
+        <div>
+          Diferencia promedio:
+          <b>
+            ${resultado.diferenciaPromedio.toFixed(4)}
+          </b>
+        </div>
+
+      `;
+
+
+      return div;
+
+    };
+
+
+  infoControl.addTo(
+    leafletMap
+  );
+
+
+}
+
 let leafletMap = null;
 function renderMapa(res) {
   const cont = document.getElementById("map");
@@ -770,20 +2099,157 @@ function renderMapa(res) {
    ============================================================ */
 document.getElementById("btnCSV").addEventListener("click", () => {
   const res = estadoApp.resultados || [];
-  const filas = [["llave","nombre","estado","campos_con_diferencia","diferencia_area_pct","centroide_desplazado_km"]];
-  res.forEach(r => filas.push([
-    r.key, r.nombre, ETIQUETA_ESTADO[r.estado],
-    r.propDiffs.map(d=>d.campo).join(" / "),
-    r.geomDiff && !r.geomDiff.sinGeom ? r.geomDiff.areaDiffPct.toFixed(2) : "",
-    r.geomDiff && !r.geomDiff.sinGeom ? r.geomDiff.centroidDistKm.toFixed(2) : ""
-  ]));
-  const csv = "\uFEFF" + filas.map(f => f.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
-  const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "comparacion_capas.csv";
-  a.click();
+
+  // Crear libro y hoja
+  const wb = XLSX.utils.book_new();
+
+  // Primera fila: título
+  const datos = [
+    ["CC - COMPARACIÓN CAPAS (Diferencias encontradas en la comparación)"],
+    [
+      "llave",
+      "nombre",
+      "estado",
+      "campos_con_diferencia (Encontrada ↔ Trabajada)",
+      "diferencia_area_pct",
+      "centroide_desplazado_km",
+      "Diferencia (Encontrada ↔ Trabajada)"
+    ]
+  ];
+
+  // Agregar resultados
+  res.forEach(r => {
+    const diferencias = r.propDiffs || [];
+
+    // Campos donde se encontraron diferencias
+    const campos = diferencias
+      .map(d => d.campo)
+      .join(" / ");
+
+    // Valores encontrados ↔ trabajados
+    const valores = diferencias
+      .map(d => `${fmtValExcel(d.encontrada)} ↔ ${fmtValExcel(d.trabajada)}`)
+      .join(" / ");
+
+    datos.push([
+      r.key,
+      r.nombre,
+      ETIQUETA_ESTADO[r.estado],
+      campos || null,
+      r.geomDiff && !r.geomDiff.sinGeom
+        ? Number(r.geomDiff.areaDiffPct.toFixed(2))
+        : null,
+      r.geomDiff && !r.geomDiff.sinGeom
+        ? Number(r.geomDiff.centroidDistKm.toFixed(2))
+        : null,
+      valores || null
+    ]);
+  });
+
+  // Convertir datos a hoja
+  const ws = XLSX.utils.aoa_to_sheet(datos);
+
+  // Anchos de columnas similares al archivo de referencia
+  ws["!cols"] = [
+    { wch: 23 },
+    { wch: 18 },
+    { wch: 20 },
+    { wch: 65 },
+    { wch: 22 },
+    { wch: 25 },
+    { wch: 55 }
+  ];
+
+  // Estilo del título
+  if (ws["A1"]) {
+    ws["A1"].s = {
+      font: {
+        bold: true,
+        color: { rgb: "FFFFFF" },
+        sz: 14
+      },
+      fill: {
+        fgColor: { rgb: "9F2241" }
+      },
+      alignment: {
+        horizontal: "left",
+        vertical: "center"
+      }
+    };
+  }
+
+  // Estilo de encabezados
+  for (let c = 0; c < 7; c++) {
+    const celda = ws[XLSX.utils.encode_cell({ r: 1, c })];
+
+    if (celda) {
+      celda.s = {
+        font: {
+          bold: true,
+          color: { rgb: "FFFFFF" }
+        },
+        fill: {
+          fgColor: { rgb: "13322B" }
+        },
+        alignment: {
+          horizontal: "center",
+          vertical: "center",
+          wrapText: true
+        },
+        border: {
+          bottom: {
+            style: "thin",
+            color: { rgb: "FFFFFF" }
+          }
+        }
+      };
+    }
+  }
+
+  // Formato de las filas
+  for (let r = 2; r < datos.length; r++) {
+    for (let c = 0; c < 7; c++) {
+      const celda = ws[XLSX.utils.encode_cell({ r, c })];
+
+      if (!celda) continue;
+
+      celda.s = {
+        alignment: {
+          vertical: "top",
+          wrapText: true
+        }
+      };
+    }
+  }
+
+  // Formato numérico para porcentajes y distancias
+  for (let r = 2; r < datos.length; r++) {
+    const area = ws[XLSX.utils.encode_cell({ r, c: 4 })];
+    const centroide = ws[XLSX.utils.encode_cell({ r, c: 5 })];
+
+    if (area) area.z = "0.00";
+    if (centroide) centroide.z = "0.00";
+  }
+
+  // Congelar encabezados
+  ws["!freeze"] = { xSplit: 0, ySplit: 2 };
+
+  // Crear hoja
+  XLSX.utils.book_append_sheet(wb, ws, "Comparación Capas");
+
+  // Descargar
+  XLSX.writeFile(wb, "comparacion_capas.xlsx");
 });
+
+
+// Convierte valores para mostrarlos en Excel
+function fmtValExcel(v) {
+  if (v === undefined || v === null || v === "") {
+    return "";
+  }
+
+  return String(v);
+}
 </script>
 </body>
 </html>
